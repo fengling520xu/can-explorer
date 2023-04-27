@@ -1,3 +1,7 @@
+def frozen(value) -> property:
+    return property(fget=lambda _: value)
+
+
 class Percentage:
     @staticmethod
     def get(n1: float, n2: float) -> int:

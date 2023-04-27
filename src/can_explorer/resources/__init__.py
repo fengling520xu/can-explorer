@@ -1,3 +1,8 @@
+import pathlib
+
+DIR_PATH = pathlib.Path(__file__).parent
+
+
 def frozen(value) -> property:
     return property(fget=lambda _: value)
 

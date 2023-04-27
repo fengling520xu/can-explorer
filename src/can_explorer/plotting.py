@@ -4,8 +4,9 @@ from typing import Dict, Iterable
 
 import dearpygui.dearpygui as dpg
 
+from can_explorer import param
 from can_explorer.can_bus import PayloadBuffer
-from can_explorer.layout import Default, Font, PlotTable, Tag
+from can_explorer.layout import Font, PlotTable, Tag
 
 
 class Config:
@@ -54,7 +55,7 @@ class Label(str):
             label=hex(can_id),
             **Config.LABEL,
         )
-        dpg.bind_item_font(label, Font.LABEL)
+        dpg.bind_item_font(label, Font.label())
 
         return super().__new__(cls, label)
 
@@ -94,8 +95,8 @@ class AxisData(dict):
 
 class PlotManager:
     row: Dict[int, Row] = {}
-    _height = Default.PLOT_HEIGHT
-    _x_limit = Default.BUFFER_SIZE
+    _height = param.plot_height.value
+    _x_limit = param.buffer_size.value
 
     def __call__(self) -> dict[int, Row]:
         """
@@ -134,7 +135,7 @@ class PlotManager:
         if can_id in self.row:
             raise Exception(f"Error: id {can_id} already exists")
 
-        row = Row(can_id, self._height, **AxisData(self._slice(payloads)))
+        row = Row(can_id, param.plot_height.value, **AxisData(self._slice(payloads)))
         self.row[can_id] = row
 
     def delete(self, can_id: int) -> None:

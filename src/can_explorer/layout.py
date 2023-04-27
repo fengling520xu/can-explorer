@@ -1,33 +1,68 @@
 from enum import Enum, auto, unique
-from pathlib import Path
-from typing import Callable, Final, Iterable, Union
+from typing import Callable, Final, Union
 
 import dearpygui.dearpygui as dpg
 from dearpygui_ext.themes import create_theme_imgui_light
 
-from can_explorer.can_bus import PayloadBuffer
+from can_explorer import param
+from can_explorer.resources import DIR_PATH as RESOURCES_DIR
 from can_explorer.resources import Percentage
-
-RESOURCES_DIR = Path(__file__).parent / "resources"
-
-
-class Default:
-    WIDTH: Final = 600
-    HEIGHT: Final = 600
-    FONT_HEIGHT: Final = 14
-    PLOT_HEIGHT: Final = 100
-    BUFFER_SIZE: Final = 100
-    FONT: Final = RESOURCES_DIR / "Inter-Medium.ttf"
 
 
 class Font:
-    DEFAULT: int
-    LABEL: int
+    HEIGHT: Final = 14
+    PATH: Final = RESOURCES_DIR / "Inter-Medium.ttf"
+    registered = False
+    _default = None
+    _label = None
+
+    @classmethod
+    def init(cls):
+        # For some reason multiple calls to the font registry cause buggy behavior
+        with dpg.font_registry():
+            cls._default = dpg.add_font(cls.PATH, cls.HEIGHT)
+            cls._label = dpg.add_font(cls.PATH, cls.HEIGHT * 1.75)
+
+        cls.registered = True
+
+    @classmethod
+    def default(cls) -> int:
+        if not cls.registered:
+            cls.init()
+        return cls._default  # type: ignore [return-value]
+
+    @classmethod
+    def label(cls) -> int:
+        if not cls.registered:
+            cls.init()
+        return cls._label  # type: ignore [return-value]
 
 
 class Theme:
-    DEFAULT: int
-    LIGHT: int
+    DEFAULT_BACKGROUND: Final = (50, 50, 50, 255)
+
+    @staticmethod
+    def default() -> int:
+        return 0
+
+    @classmethod
+    def disabled(cls) -> int:
+        with dpg.theme() as theme:
+            with dpg.theme_component(dpg.mvButton, enabled_state=False):
+                dpg.add_theme_color(
+                    dpg.mvThemeCol_ButtonHovered, cls.DEFAULT_BACKGROUND
+                )
+                dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, cls.DEFAULT_BACKGROUND)
+        return theme
+
+    @staticmethod
+    def light() -> int:
+        return create_theme_imgui_light()
+
+
+class Window:
+    HEIGHT: Final = 600
+    WIDTH: Final = 600
 
 
 @unique
@@ -43,9 +78,6 @@ class Tag(str, Enum):
     TAB_SETTINGS = auto()
     SETTINGS_PLOT_BUFFER = auto()
     SETTINGS_PLOT_HEIGHT = auto()
-    SETTINGS_INTERFACE = auto()
-    SETTINGS_CHANNEL = auto()
-    SETTINGS_BAUDRATE = auto()
     SETTINGS_APPLY = auto()
 
 
@@ -88,27 +120,11 @@ class PlotTable(PercentageWidthTableRow):
 
 
 def _init_fonts():
-    global Font
-    with dpg.font_registry():
-        Font.DEFAULT = dpg.add_font(Default.FONT, Default.FONT_HEIGHT)
-        Font.LABEL = dpg.add_font(Default.FONT, Default.FONT_HEIGHT * 1.75)
-
-    dpg.bind_font(Font.DEFAULT)
+    dpg.bind_font(Font.default())
 
 
 def _init_themes():
-    global Theme
-
-    Theme.DEFAULT = 0
-    Theme.LIGHT = create_theme_imgui_light()
-
-    default_background = (50, 50, 50, 255)
-    with dpg.theme() as disabled_theme:
-        with dpg.theme_component(dpg.mvButton, enabled_state=False):
-            dpg.add_theme_color(dpg.mvThemeCol_ButtonHovered, default_background)
-            dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, default_background)
-
-    dpg.bind_theme(disabled_theme)
+    dpg.bind_theme(Theme.disabled())
 
 
 def _header() -> None:
@@ -152,7 +168,7 @@ def _footer() -> None:
                         tag=Tag.SETTINGS_PLOT_BUFFER,
                         width=-1,
                         default_value=Percentage.get(
-                            Default.BUFFER_SIZE, PayloadBuffer.MAX
+                            param.buffer_size.value, max(param.buffer_size)
                         ),
                         min_value=2,
                         max_value=100,
@@ -166,7 +182,9 @@ def _footer() -> None:
                     dpg.add_slider_int(
                         tag=Tag.SETTINGS_PLOT_HEIGHT,
                         width=-1,
-                        default_value=Percentage.get(Default.PLOT_HEIGHT, 500),
+                        default_value=Percentage.get(
+                            param.plot_height.value, max(param.plot_height)
+                        ),
                         min_value=10,
                         max_value=100,
                         clamped=True,
@@ -198,9 +216,15 @@ def _viewer_tab() -> None:
 
 def _settings_tab() -> None:
     with dpg.collapsing_header(label="CAN Bus", default_open=True):
-        dpg.add_combo(tag=Tag.SETTINGS_INTERFACE, label="Interface")
-        dpg.add_input_text(tag=Tag.SETTINGS_CHANNEL, label="Channel")
-        dpg.add_combo(tag=Tag.SETTINGS_BAUDRATE, label="Baudrate")
+        dpg.add_combo(
+            label="Interface",
+            **param.interface.as_dict(),
+        )
+        dpg.add_input_text(label="Channel", **param.channel.as_dict())
+        dpg.add_combo(
+            label="Baudrate",
+            **param.baudrate.as_dict(),
+        )
         dpg.add_spacer(height=5)
         dpg.add_button(tag=Tag.SETTINGS_APPLY, label="Apply", height=30)
         dpg.add_spacer(height=5)
@@ -210,7 +234,7 @@ def _settings_tab() -> None:
             dpg.add_text("Light Theme")
             dpg.add_checkbox(
                 callback=lambda sender: dpg.bind_theme(
-                    Theme.LIGHT if dpg.get_value(sender) else Theme.DEFAULT
+                    Theme.light() if dpg.get_value(sender) else Theme.default()
                 )
             )
 
@@ -255,7 +279,7 @@ def popup_error(name: Union[str, Exception], info: Union[str, Exception]) -> Non
                     label="Close",
                     width=-1,
                     user_data=(modal_id, True),
-                    callback=lambda *_, user_data: dpg.delete_item(user_data[0]),
+                    callback=lambda _, __, user_data: dpg.delete_item(user_data[0]),
                 )
 
     # guarantee these commands happen in another frame
@@ -273,27 +297,13 @@ def get_main_button_state() -> bool:
 
 
 def get_settings_plot_buffer() -> int:
-    max_value = PayloadBuffer.MAX
     percentage = dpg.get_value(Tag.SETTINGS_PLOT_BUFFER)
-    return Percentage.reverse(percentage, max_value)
+    return Percentage.reverse(percentage, max(param.buffer_size))
 
 
 def get_settings_plot_height() -> int:
-    max_value = 500  # px
     percentage = dpg.get_value(Tag.SETTINGS_PLOT_HEIGHT)
-    return Percentage.reverse(percentage, max_value)
-
-
-def get_settings_interface() -> str:
-    return dpg.get_value(Tag.SETTINGS_INTERFACE)
-
-
-def get_settings_channel() -> str:
-    return dpg.get_value(Tag.SETTINGS_CHANNEL)
-
-
-def get_settings_baudrate() -> int:
-    return dpg.get_value(Tag.SETTINGS_BAUDRATE)
+    return Percentage.reverse(percentage, max(param.plot_height))
 
 
 def set_main_button_callback(callback: Callable) -> None:
@@ -326,11 +336,3 @@ def set_plot_height_slider_callback(callback: Callable) -> None:
 
 def set_settings_apply_button_callback(callback: Callable) -> None:
     dpg.configure_item(Tag.SETTINGS_APPLY, callback=callback)
-
-
-def set_settings_interface_options(iterable: Iterable[str]) -> None:
-    dpg.configure_item(Tag.SETTINGS_INTERFACE, items=iterable)
-
-
-def set_settings_baudrate_options(iterable: Iterable[str]) -> None:
-    dpg.configure_item(Tag.SETTINGS_BAUDRATE, items=iterable)

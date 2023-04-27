@@ -1,77 +1,53 @@
-from abc import abstractmethod
-from dataclasses import dataclass
-from pathlib import Path
+from __future__ import annotations
+
+import uuid
+from typing import Optional
 
 import dearpygui.dearpygui as dpg
-from dearpygui_ext.themes import create_theme_imgui_light
-
-RESOURCES_DIR = Path(__file__).parent / "resources"
 
 
-def frozen(value) -> property:
-    return property(fget=lambda _: value)
-
-
-class IterParam(int):
-    @property
-    @abstractmethod
-    def _min(self):
-        ...
+class Param:
+    def __init__(self, value: Optional[int] = None):
+        self._value = value
+        self._tag = hash(uuid.uuid4())
 
     @property
-    @abstractmethod
-    def _max(self):
-        ...
+    def value(self) -> Optional[int]:
+        return self._value
+
+    def _update(self) -> None:
+        self._value = dpg.get_value(self._tag)
+
+    def as_dict(self) -> dict:
+        return dict(tag=self._tag, callback=self._update)
+
+
+class OptionParam(Param):
+    _options: Optional[tuple] = None
+
+    @property
+    def options(self) -> Optional[tuple]:
+        return self._options
+
+    @options.setter
+    def options(self, options: list[str]) -> None:
+        dpg.configure_item(self._tag, items=options)
+        self._options = options
+
+
+class RangeParam(Param):
+    def __init__(self, minimum: int, maximum: int, value: Optional[int] = None):
+        super().__init__(value)
+        self._min = minimum
+        self._max = maximum
 
     def __iter__(self):
         yield self._min
         yield self._max
 
 
-class BufferSize(IterParam):
-    _min = frozen(50)
-    _max = frozen(2_500)
-    value = 100
-
-
-class PlotSize(IterParam):
-    _min = frozen(50)
-    _max = frozen(500)
-    value = 100
-
-
-class Baudrate:
-    value = None
-
-
-class Interface:
-    value = None
-
-
-class Channel:
-    value = None
-
-
-@dataclass(frozen=True)
-class Window:
-    height = 600
-    width = 600
-
-
-class Font:
-    height = frozen(14)
-    path = frozen(RESOURCES_DIR / "Inter-Medium.ttf")
-
-    def default(self) -> int:
-        return dpg.add_font(self.path, self.height)
-
-    def label(self) -> int:
-        return dpg.add_font(self.path, self.height * 1.75)
-
-
-class Theme:
-    def default(self) -> int:
-        return 0
-
-    def light(self) -> int:
-        return create_theme_imgui_light()
+baudrate = OptionParam()
+channel = OptionParam()
+interface = OptionParam()
+buffer_size = RangeParam(minimum=50, maximum=2500, value=100)
+plot_height = RangeParam(minimum=50, maximum=500, value=100)

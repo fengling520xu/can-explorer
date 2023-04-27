@@ -5,8 +5,7 @@ from typing import Optional
 import can
 import dearpygui.dearpygui as dpg
 
-from can_explorer import can_bus, layout, plotting
-from can_explorer.layout import Default
+from can_explorer import can_bus, layout, param, plotting
 
 
 class State(enum.Flag):
@@ -123,9 +122,9 @@ def plot_height_slider_callback(sender, app_data, user_data) -> None:
 
 def settings_apply_button_callback(sender, app_data, user_data) -> None:
     user_settings = dict(
-        interface=layout.get_settings_interface(),
-        channel=layout.get_settings_channel(),
-        bitrate=layout.get_settings_baudrate(),
+        interface=param.interface.value,
+        channel=param.channel.value,
+        bitrate=param.baudrate.value,
     )
 
     try:
@@ -142,8 +141,8 @@ def main():
     with dpg.window() as app_main:
         layout.create()
 
-    layout.set_settings_interface_options(can_bus.INTERFACES)
-    layout.set_settings_baudrate_options(can_bus.BAUDRATES)
+    param.interface.options = can_bus.INTERFACES
+    param.baudrate.options = can_bus.BAUDRATES
     layout.set_settings_apply_button_callback(settings_apply_button_callback)
 
     layout.set_main_button_callback(start_stop_button_callback)
@@ -153,7 +152,7 @@ def main():
     layout.set_plot_height_slider_callback(plot_height_slider_callback)
 
     dpg.create_viewport(
-        title="CAN Explorer", width=Default.WIDTH, height=Default.HEIGHT
+        title="CAN Explorer", width=layout.Window.WIDTH, height=layout.Window.HEIGHT
     )
     dpg.set_viewport_resize_callback(layout.resize)
     dpg.setup_dearpygui()

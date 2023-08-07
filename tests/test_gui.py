@@ -14,12 +14,11 @@ from can_explorer.resources.demo import demo_config
 from tests.resources import WITHIN_CI
 from tests.resources.gui_components import Gui
 
-if HOST_OS == "linux":
-    import Xlib.display
-    from pyvirtualdisplay.smartdisplay import SmartDisplay
-
-elif HOST_OS == "windows":
+if HOST_OS == "windows":
     import pygetwindow
+else:
+    import Xlib.display
+    from pyvirtualdisplay import Display
 
 pyautogui.locate = partial(pyautogui.locateCenterOnScreen, grayscale=True)
 
@@ -38,7 +37,7 @@ def virtual_display():
         yield
 
     else:
-        display = SmartDisplay(visible=True, use_xauth=True)
+        display = Display()
         display.start()
 
         yield
@@ -65,7 +64,7 @@ def virtual_gui(request, gui_process):
         app_window = pygetwindow.getWindowsWithTitle(app_title)[0]
         app_window.restore()
 
-    else:
+    if HOST_OS == "linux":
         # Attach pyautogui to the virtual display
         pyautogui._pyautogui_x11._display = Xlib.display.Display(os.getenv("DISPLAY"))
 

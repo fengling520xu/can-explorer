@@ -19,33 +19,37 @@ jobs:
 
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest] #, macos-latest]
         python-version: ['3.8', '3.9', '3.10', '3.11']
         
     steps:
     - name: Checkout repo
       uses: actions/checkout@v3
 
+    - name: Setup dependencies
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" == "macOS" ]; then
+          brew install --cask xquartz
+          echo "/opt/X11/bin" >> $GITHUB_PATH
+
+        elif [ "$RUNNER_OS" == "Linux" ]; then
+          sudo apt-get install -y xvfb xserver-xephyr scrot
+
+        elif [ "$RUNNER_OS" == "Windows" ]; then
+          echo "No dependencies currently required"
+
+        else
+          echo "$RUNNER_OS not supported"
+          exit 1
+        fi
+
     - name: Setup python ${{ matrix.python-version }}
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
 
-    - name: Test linux
-      if: runner.os != 'Windows'
-      uses: nick-fields/retry@v2
-      with:
-        timeout_minutes: 10
-        max_attempts: 3
-        command: |
-          sudo apt-get install -y xvfb xserver-xephyr scrot
-          python -m pip install poetry
-          poetry install -v
-          mkdir -p screenshots
-          xvfb-run -a poetry run pytest -v
-
-    - name: Test windows
-      if: runner.os == 'Windows'
+    - name: Setup poetry
       uses: nick-fields/retry@v2
       with:
         timeout_minutes: 10
@@ -53,8 +57,25 @@ jobs:
         command: |
           python -m pip install poetry==1.3.1
           poetry install -v
+
+    - name: Pytest
+      uses: nick-fields/retry@v2
+      with:
+        timeout_minutes: 10
+        max_attempts: 3
+        shell: bash
+        command: |
           mkdir -p screenshots
-          poetry run pytest -v
+
+          if [ "$RUNNER_OS" == "macOS" ]; then
+            Xvfb :1 & 
+            export DISPLAY=":1"
+            poetry run pytest -v
+          elif [ "$RUNNER_OS" == "Linux" ]; then
+            xvfb-run -a poetry run pytest -v
+          else
+            poetry run pytest -v
+          fi
 
     - name: Upload screenshots
       uses: actions/upload-artifact@v3
@@ -63,5 +84,5 @@ jobs:
         name: screenshots
         path: screenshots/*.png
         
-    - name: Typecheck
+    - name: Mypy
       run: poetry run mypy src

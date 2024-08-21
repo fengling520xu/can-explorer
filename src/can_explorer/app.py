@@ -1,178 +1,105 @@
-import enum
-import threading
-from typing import Callable, Optional
+from __future__ import annotations
+
+import logging
+import sys
+from collections.abc import Callable
 
 import can
-import can.player
 import dearpygui.dearpygui as dpg
 
-from can_explorer import can_bus, layout, plotting
-from can_explorer.layout import Default
+from can_explorer.configs import CANBus, Default
+from can_explorer.controllers import Controller
+from can_explorer.models import PlotModel
+from can_explorer.tags import Tag
+from can_explorer.views import MainView
 
 
-class State(enum.Flag):
-    ACTIVE = True
-    STOPPED = False
+class CanExplorer:
+    def __init__(
+        self,
+        model: PlotModel | None = None,
+        view: MainView | None = None,
+        controller: Controller | None = None,
+        bus: can.BusABC | None = None,
+        tags: Tag | None = None,
+    ):
+        if controller and any([model, view]):
+            raise RuntimeError(
+                "Too many arguments | [model, view] or [controller] can be supplied, but not both."
+            )
 
+        elif controller is None:
+            self.model = model or PlotModel()
+            self.view = view or MainView()
+            self.controller = Controller(self.model, self.view)
 
-class MainApp:
-    _rate = 0.05
-    _cancel = threading.Event()
-    _worker: threading.Thread
-    _state: State
+        else:
+            self.model = controller.model
+            self.view = controller.view
+            self.controller = controller
 
-    bus: Optional[can.bus.BusABC] = None
-    can_recorder = can_bus.Recorder()
-    plot_manager = plotting.PlotManager()
+        if bus is not None:
+            self.controller.set_bus(bus)
 
-    @property
-    def is_active(self) -> bool:
-        return bool(self._state)
+        if tags is not None:
+            self.view.tag = tags
 
-    def set_state(self, state: bool) -> None:
-        """
-        Automatically start or stop the app based on state.
+    def setup(self):
+        dpg.create_context()
 
-        Args:
-            state (bool)
-        """
-        self._state = State(state)
+        main_window = self.view.ui.build()
 
-        self.start() if self._state else self.stop()
+        self.view.settings.set_interface_options(CANBus.INTERFACES)
+        self.view.settings.set_baudrate_options(CANBus.BAUDRATES)
+        self.view.settings.set_apply_button_callback(
+            self.controller.settings_apply_button_callback
+        )
+        self.view.settings.set_can_id_format_callback(
+            self.controller.settings_can_id_format_callback
+        )
 
-    def repopulate(self) -> None:
-        """
-        Repopulate all plots in ascending order.
-        """
-        self.plot_manager.clear_all()
-        for can_id, payload_buffer in sorted(self.can_recorder.items()):
-            self.plot_manager.add(can_id, payload_buffer)
+        self.view.set_main_button_label(self.controller.state)
+        self.view.set_main_button_callback(self.controller.start_stop_button_callback)
+        self.view.set_clear_button_callback(self.controller.clear_button_callback)
 
-    def _get_worker(self) -> threading.Thread:
-        """
-        Get the main loop worker thread.
+        self.view.set_plot_buffer_slider_callback(
+            self.controller.plot_buffer_slider_callback
+        )
+        self.view.set_plot_height_slider_callback(
+            self.controller.plot_height_slider_callback
+        )
 
-        Returns:
-            threading.Thread: Worker
-        """
+        dpg.create_viewport(
+            title=Default.TITLE, width=Default.WIDTH, height=Default.HEIGHT
+        )
+        dpg.set_viewport_resize_callback(self.view.resize)
+        dpg.setup_dearpygui()
+        self.view.resize()
 
-        def loop():
-            while not self._cancel.wait(self._rate):
-                # Note: must convert can_recorder to avoid runtime error
-                for can_id in tuple(self.can_recorder):
-                    if can_id not in self.plot_manager():
-                        self.repopulate()
-                        break
-                    else:
-                        self.plot_manager.update(can_id)
-            self._cancel.clear()
+        dpg.set_primary_window(main_window, True)
 
-        return threading.Thread(target=loop, daemon=True)
+    def teardown(self):
+        if self.controller.is_active():
+            self.controller.stop()
+        dpg.destroy_context()
 
-    def start(self):
-        """
-        Initialize and start app loop.
+    def exception_handler(self, exc_type, exc_value, exc_traceback):
+        logging.debug(
+            msg="ExceptionHandler", exc_info=(exc_type, exc_value, exc_traceback)
+        )
+        self.view.popup_error(name=exc_type.__name__, info=exc_value)
 
-        Raises:
-            Exception: If CAN bus does not exist.
-        """
-        if self.bus is None:
-            raise Exception("ERROR: Must apply settings before starting")
+    def run(self, test_config: Callable | None = None, show: bool = True):
+        self.setup()
 
-        self.can_recorder.set_bus(self.bus)
-        self.can_recorder.start()
+        if test_config:
+            test_config(self)
 
-        self._worker = self._get_worker()
-        self._worker.start()
+        sys.excepthook = self.exception_handler
 
-    def stop(self):
-        """
-        Stop the app loop.
-        """
-        self.can_recorder.stop()
-        self._cancel.set()
-        self._worker.join()
+        if show:
+            dpg.show_viewport()
 
-    def set_bus(self, bus: can.BusABC) -> None:
-        """
-        Set CAN bus to use during app loop.
-        """
-        self.bus = bus
+        dpg.start_dearpygui()
 
-
-app = MainApp()
-
-
-def start_stop_button_callback(sender, app_data, user_data) -> None:
-    try:
-        app.set_state(layout.get_main_button_state())
-    except Exception as e:
-        layout.popup_error(name=type(e).__name__, info=e)
-
-
-def clear_button_callback(sender, app_data, user_data) -> None:
-    app.plot_manager.clear_all()
-
-
-def plot_buffer_slider_callback(sender, app_data, user_data) -> None:
-    app.plot_manager.set_limit(layout.get_settings_plot_buffer())
-
-
-def plot_height_slider_callback(sender, app_data, user_data) -> None:
-    app.plot_manager.set_height(layout.get_settings_plot_height())
-
-
-def settings_apply_button_callback(sender, app_data, user_data) -> None:
-    user_settings = dict(
-        interface=layout.get_settings_interface(),
-        channel=layout.get_settings_channel(),
-        bitrate=layout.get_settings_baudrate(),
-    )
-
-    try:
-        bus = can.Bus(**{k: v for k, v in user_settings.items() if v})  # type: ignore
-        app.set_bus(bus)
-
-    except Exception as e:
-        layout.popup_error(name=type(e).__name__, info=e)
-
-
-def settings_can_id_format_callback(sender, app_data, user_data) -> None:
-    app.plot_manager.set_id_format(layout.get_settings_id_format())
-    app.repopulate()
-
-
-def main(test_config: Optional[Callable] = None):
-    dpg.create_context()
-
-    with dpg.window() as app_main:
-        layout.create()
-
-    layout.set_settings_interface_options(can_bus.INTERFACES)
-    layout.set_settings_baudrate_options(can_bus.BAUDRATES)
-    layout.set_settings_apply_button_callback(settings_apply_button_callback)
-    layout.set_settings_can_id_format_callback(settings_can_id_format_callback)
-
-    layout.set_main_button_callback(start_stop_button_callback)
-    layout.set_clear_button_callback(clear_button_callback)
-
-    layout.set_plot_buffer_slider_callback(plot_buffer_slider_callback)
-    layout.set_plot_height_slider_callback(plot_height_slider_callback)
-
-    dpg.create_viewport(title=Default.TITLE, width=Default.WIDTH, height=Default.HEIGHT)
-    dpg.set_viewport_resize_callback(layout.resize)
-    dpg.setup_dearpygui()
-    layout.resize()
-
-    dpg.show_viewport()
-    dpg.set_primary_window(app_main, True)
-
-    if test_config:
-        test_config()
-
-    dpg.start_dearpygui()
-    dpg.destroy_context()
-
-
-if __name__ == "__main__":
-    main()
+        self.teardown()

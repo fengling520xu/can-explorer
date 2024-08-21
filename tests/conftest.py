@@ -1,52 +1,66 @@
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock
 
+import can
 import pytest
-from can_explorer import app, can_bus, plotting
+from can_explorer import CanExplorer, Controller, MainView, PlotModel
+from can_explorer.resources.demo import demo_config
+from can_explorer.tags import Tag
 
 
 @pytest.fixture
-def mock_buffer():
-    with patch("can_explorer.can_bus.PayloadBuffer", autospec=True) as mock:
-        yield mock
+def vbus():
+    bus = can.interface.Bus(interface="virtual", channel="pytest")
+    yield bus
+    bus.shutdown()
 
 
 @pytest.fixture
-def mock_listener():
-    with patch("can_explorer.can_bus._Listener", autospec=True) as mock:
-        yield mock
+def vbus2():
+    bus = can.interface.Bus(interface="virtual", channel="pytest")
+    yield bus
+    bus.shutdown()
 
 
 @pytest.fixture
-def mock_notifier():
-    with patch("can_explorer.can_bus.Notifier", autospec=True) as mock:
-        yield mock
+def model():
+    yield PlotModel()
 
 
 @pytest.fixture
-def fake_recorder(mock_listener, mock_notifier):
-    recorder = can_bus.Recorder()
-
-    with patch("can_explorer.can_bus.Recorder") as mock:
-        mock.return_value = recorder
-
-        yield recorder
+def view():
+    yield MainView()
 
 
 @pytest.fixture
-def fake_manager():
-    with patch("can_explorer.plotting.Row"):
-        manager = plotting.PlotManager()
-
-        with patch("can_explorer.plotting.PlotManager") as mock:
-            mock.return_value = manager
-
-            yield manager
+def controller(model, view, vbus2):
+    yield Controller(model, view, vbus2)
 
 
 @pytest.fixture
-def fake_app(fake_manager, fake_recorder):
-    main_app = app.MainApp()
-    main_app.plot_manager = fake_manager
-    main_app.can_recorder = fake_recorder
-    main_app.set_bus(Mock())
-    yield main_app
+def tag():
+    yield Tag()
+
+
+@pytest.fixture
+def app(controller, tag):
+    _app = CanExplorer(controller=controller, tags=tag)
+    _app.setup()
+    yield _app
+    _app.teardown()
+
+
+@pytest.fixture(autouse=True)
+def set_dpgtester_target(app, dpgtester):
+    def func():
+        demo_config(app)
+        app.run()
+
+    dpgtester.set_target(func)
+    yield
+
+
+@pytest.fixture
+def fake_controller(model):
+    yield Controller(
+        model=model, recorder=MagicMock(), bus=MagicMock(), view=MagicMock()
+    )

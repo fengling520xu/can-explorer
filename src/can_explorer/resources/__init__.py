@@ -1,31 +1,24 @@
 import pathlib
 import platform
-import uuid
+import threading
+from random import randint
 from typing import Any, Final
+
+from can import Message
 
 DIR_PATH: Final = pathlib.Path(__file__).parent
 
 HOST_OS: Final = platform.system().lower()
 
 
-def frozen(value: Any) -> property:
+def generate_random_can_message() -> Message:
     """
-    Helper function to create an inline property.
-
-    Args:
-        value (Any)
-
-    Returns:
-        property
+    Generate a random CAN message.
     """
-    return property(fget=lambda _: value)
-
-
-def generate_tag() -> int:
-    """
-    Generate a random, unique tag.
-    """
-    return hash(uuid.uuid4())
+    message_id = randint(1, 25)
+    data_length = randint(1, 8)
+    data = (randint(0, 255) for _ in range(data_length))
+    return Message(arbitration_id=message_id, data=data)
 
 
 class Percentage:
